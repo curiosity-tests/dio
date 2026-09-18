@@ -2,17 +2,17 @@ name: CodeQL
 
 on:
   schedule:
-    - cron: '00 12 * * 3'
+  - cron: '00 12 * * 3'
   push:
     branches:
-      - main
+    - main
     paths-ignore:
-      - '**.md'
+    - '**.md'
   pull_request:
     branches:
-      - main
+    - main
     paths-ignore:
-      - '**.md'
+    - '**.md'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event_name }}-${{ github.ref }}

@@ -18,16 +18,16 @@ on:
         default: ""
   push:
     branches:
-      - main
-      - '6.0.0'
+    - main
+    - '6.0.0'
     paths-ignore:
-      - "**.md"
+    - "**.md"
   pull_request:
     branches:
-      - main
-      - '6.0.0'
+    - main
+    - '6.0.0'
     paths-ignore:
-      - "**.md"
+    - "**.md"
 
 # Ensure that new pushes/updates cancel running jobs
 concurrency:
@@ -60,129 +60,200 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        sdk: [ min, stable, beta ]
+        sdk: [min, stable, beta]
     env:
       TEST_PRESET: all
     steps:
-      - name: Checkout code
-        uses: crashappsec/action-checkout@main
-        with:
-          chalk: ${{ env.CHALK_ON }}
-          profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
-          observables_continue_on_error: false
-          lfs: false
-          persist-credentials: false
-      - name: Assert instrumentation is live
-        if: env.CHALK_ON == 'true'
-        run: |
-          test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
-          test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
-
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 #v2.23.0
-        with:
-          cache: true
-          flutter-version: ${{ case(matrix.sdk == 'min', '3.3.0', '') }}
-          channel: ${{ case(matrix.sdk == 'min', '', matrix.channel) }}
-      - run: |
-          echo "TARGET_DART_SDK=$TARGET_DART_SDK" >> $GITHUB_ENV
-        env:
-          TARGET_DART_SDK: ${{ matrix.sdk }}
-      - name: Prepare dependencies for the project management
-        run: dart pub get
-      - uses: bluefireteam/melos-action@2982f8e4fc92440a219490009d6d05195cb1a6a5 #v3.8.0
-        with:
-          run-bootstrap: false
-          melos-version: ${{ case(matrix.sdk == 'min', '3.4.0', '^6.0.0') }}
-      - name: Remove dio_web_adapter overrides
-        if: ${{ matrix.sdk == 'min' }}
-        run: rm -rf plugins/web_adapter
-      - name: Check satisfied packages
-        run: |
-          dart ./scripts/melos_packages.dart
-          echo $(cat .melos_packages) >> $GITHUB_ENV
-      - name: Melos Bootstrap
-        run: melos bootstrap
-      - name: '[Verify step] Format'
-        if: ${{ matrix.sdk == 'stable' }}
-        run: melos run format
-      - name: '[Verify step] Analyze packages'
-        if: ${{ matrix.sdk == 'stable' }}
-        run: melos run analyze
-      - name: '[Verify step] Publish dry-run'
-        if: ${{ matrix.sdk == 'stable' }}
-        run: melos run publish-dry-run
+    - name: Checkout code
+      uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+        persist-credentials: false
+    - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2   #v2.23.0
+      with:
+        cache: true
+        flutter-version: ${{ case(matrix.sdk == 'min', '3.3.0', '') }}
+        channel: ${{ case(matrix.sdk == 'min', '', matrix.channel) }}
+    - run: |
+        echo "TARGET_DART_SDK=$TARGET_DART_SDK" >> $GITHUB_ENV
+      env:
+        TARGET_DART_SDK: ${{ matrix.sdk }}
+    - name: Prepare dependencies for the project management
+      run: dart pub get
+    - uses: bluefireteam/melos-action@2982f8e4fc92440a219490009d6d05195cb1a6a5   #v3.8.0
+      with:
+        run-bootstrap: false
+        melos-version: ${{ case(matrix.sdk == 'min', '3.4.0', '^6.0.0') }}
+    - name: Remove dio_web_adapter overrides
+      if: ${{ matrix.sdk == 'min' }}
+      run: rm -rf plugins/web_adapter
+    - name: Check satisfied packages
+      run: |
+        dart ./scripts/melos_packages.dart
+        echo $(cat .melos_packages) >> $GITHUB_ENV
+    - name: Melos Bootstrap
+      run: melos bootstrap
+    - name: '[Verify step] Format'
+      if: ${{ matrix.sdk == 'stable' }}
+      run: melos run format
+    - name: '[Verify step] Analyze packages'
+      if: ${{ matrix.sdk == 'stable' }}
+      run: melos run analyze
+    - name: '[Verify step] Publish dry-run'
+      if: ${{ matrix.sdk == 'stable' }}
+      run: melos run publish-dry-run
       # Tests
-      - name: Install proxy for tests
-        run: sudo apt-get update && sudo apt-get install -y squid mkcert
-      - name: Start local httpbun
-        run: |
-          mkcert -install
-          mkcert -cert-file '/tmp/cert.pem' -key-file '/tmp/key.pem' httpbun.local
-          echo '127.0.0.1 httpbun.local' | sudo tee --append /etc/hosts
-          docker run \
-            --name httpbun \
-            --detach \
-            --publish 443:443 \
-            --volume /tmp:/tmp:ro \
-            --env HTTPBUN_TLS_CERT=/tmp/cert.pem \
-            --env HTTPBUN_TLS_KEY=/tmp/key.pem \
-            --pull always \
-            sharat87/httpbun
-          docker run \
-            --name httpbun-http \
-            --detach \
-            --publish 80:80 \
-            --pull always \
-            sharat87/httpbun
-          sleep 1
-          curl --fail --silent --show-error https://httpbun.local/any
-          curl --fail --silent --show-error http://httpbun.local/any
-      - name: Prepare pinning certificates
-        run: HTTPBUN_HOST=httpbun.local ./scripts/prepare_pinning_certs.sh
-      - name: Use httpbun.local for tests
-        run: melos run httpbun:local
-      - name: '[Verify step] Test Dart packages [VM]'
-        run: melos run test:vm
-      - name: Use local HTTP for Web/Flutter tests
-        run: melos run httpbun:local:http
-      - name: '[Verify step] Test Dart packages [Chrome]'
-        run: melos run test:web:chrome
-      - name: '[Verify step] Test Dart packages [Firefox]'
-        run: melos run test:web:firefox
-      - name: '[Verify step] Test Flutter packages'
-        run: melos run test:flutter
-      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 #v5.7.0
-        if: ${{ matrix.sdk == 'stable' }}
-        with:
-          distribution: 'adopt'
-          java-version: '17'
-      - name: '[Verify step] Build Flutter APK'
-        if: ${{ matrix.sdk == 'stable' }}
-        run: melos run build:example:apk
+    - name: Install proxy for tests
+      run: sudo apt-get update && sudo apt-get install -y squid mkcert
+    - name: Start local httpbun
+      run: |
+        mkcert -install
+        mkcert -cert-file '/tmp/cert.pem' -key-file '/tmp/key.pem' httpbun.local
+        echo '127.0.0.1 httpbun.local' | sudo tee --append /etc/hosts
+        docker run \
+          --name httpbun \
+          --detach \
+          --publish 443:443 \
+          --volume /tmp:/tmp:ro \
+          --env HTTPBUN_TLS_CERT=/tmp/cert.pem \
+          --env HTTPBUN_TLS_KEY=/tmp/key.pem \
+          --pull always \
+          sharat87/httpbun
+        docker run \
+          --name httpbun-http \
+          --detach \
+          --publish 80:80 \
+          --pull always \
+          sharat87/httpbun
+        sleep 1
+        curl --fail --silent --show-error https://httpbun.local/any
+        curl --fail --silent --show-error http://httpbun.local/any
+    - name: Prepare pinning certificates
+      run: HTTPBUN_HOST=httpbun.local ./scripts/prepare_pinning_certs.sh
+    - name: Use httpbun.local for tests
+      run: melos run httpbun:local
+    - name: '[Verify step] Test Dart packages [VM]'
+      run: melos run test:vm
+    - name: Use local HTTP for Web/Flutter tests
+      run: melos run httpbun:local:http
+    - name: '[Verify step] Test Dart packages [Chrome]'
+      run: melos run test:web:chrome
+    - name: '[Verify step] Test Dart packages [Firefox]'
+      run: melos run test:web:firefox
+    - name: '[Verify step] Test Flutter packages'
+      run: melos run test:flutter
+    - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961   #v5.7.0
+      if: ${{ matrix.sdk == 'stable' }}
+      with:
+        distribution: 'adopt'
+        java-version: '17'
+    - name: '[Verify step] Build Flutter APK'
+      if: ${{ matrix.sdk == 'stable' }}
+      run: melos run build:example:apk
       # Coverage
-      - name: '[Coverage] Format & print test coverage'
-        if: ${{ matrix.sdk == 'stable' }}
-        run: melos run coverage:show
-      - name: '[Coverage] Create Report'
-        uses: clearlyip/code-coverage-report-action@110af9d4ec87b6706f182fd90e3102af9e5203bf #v7.0.0
-        id: code_coverage_report
-        if: ${{ matrix.sdk == 'stable' && github.actor != 'dependabot[bot]'}}
-        with:
-          artifact_download_workflow_names: 'Verify packages abilities,coverage_baseline'
-          filename: 'coverage/cobertura.xml'
-          only_list_changed_files: true
-      - name: '[Coverage] Write PR number to file'
-        if: ${{ matrix.sdk == 'stable' && github.actor != 'dependabot[bot]'}}
-        run: echo "$EVENT_NUMBER" > pr_number.txt
-        env:
-          EVENT_NUMBER: ${{ github.event.number }}
-      - name: '[Coverage] Upload'
-        if: ${{ matrix.sdk == 'stable' && github.actor != 'dependabot[bot]'}}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a #v7.0.1
-        with:
-          name: code-coverage-results
-          path: |
-            coverage/cobertura.xml
-            code-coverage-results.md
-            pr_number.txt
-          retention-days: 7
+    - name: '[Coverage] Format & print test coverage'
+      if: ${{ matrix.sdk == 'stable' }}
+      run: melos run coverage:show
+    - name: '[Coverage] Create Report'
+      uses: clearlyip/code-coverage-report-action@110af9d4ec87b6706f182fd90e3102af9e5203bf   #v7.0.0
+      id: code_coverage_report
+      if: ${{ matrix.sdk == 'stable' && github.actor != 'dependabot[bot]'}}
+      with:
+        artifact_download_workflow_names: 'Verify packages abilities,coverage_baseline'
+        filename: 'coverage/cobertura.xml'
+        only_list_changed_files: true
+    - name: '[Coverage] Write PR number to file'
+      if: ${{ matrix.sdk == 'stable' && github.actor != 'dependabot[bot]'}}
+      run: echo "$EVENT_NUMBER" > pr_number.txt
+      env:
+        EVENT_NUMBER: ${{ github.event.number }}
+    - name: '[Coverage] Upload'
+      if: ${{ matrix.sdk == 'stable' && github.actor != 'dependabot[bot]'}}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a   #v7.0.1
+      with:
+        name: code-coverage-results
+        path: |
+          coverage/cobertura.xml
+          code-coverage-results.md
+          pr_number.txt
+        retention-days: 7
+    - name: Check observables and crashes
+      if: always() && env.CHALK_ON == 'true'
+      shell: bash
+      run: |
+        set -uo pipefail
+        root="${CURIOSITY_ROOT:-}"
+        home="${CURIOSITY_HOME:-/mnt/curiosity}"
+        obs="${home}/observables"
+        fail=0
+
+        echo "::group::curiosity layout"
+        echo "CURIOSITY_ROOT=${root:-<unset>}"
+        echo "CURIOSITY_HOME=${home}"
+        ls -la "${obs}" 2>/dev/null || echo "no observables dir at ${obs}"
+        echo "::endgroup::"
+
+        # Observables for THIS run+attempt. The prefix matters: a stale file from an
+        # earlier run on the same mount would otherwise pass.
+        prefix="${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+        shopt -s nullglob
+        mine=("${obs}/${prefix}"*)
+        if [ ${#mine[@]} -eq 0 ]; then
+          mine=("${obs}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-observables"*)
+        fi
+        if [ ${#mine[@]} -eq 0 ]; then
+          echo "::error::no observables for run ${prefix} in ${obs} - instrumentation produced nothing"
+          fail=1
+        else
+          echo "observables present: ${#mine[@]} file(s)"
+          printf '  %s\n' "${mine[@]}"
+        fi
+
+        for f in "${mine[@]}"; do
+          case "$f" in
+            *.jsonl|*.json|*.combined)
+              if ! jq --slurp "." "$f" > /dev/null 2>&1; then
+                echo "::error::observables do not parse: $f"
+                fail=1
+              fi
+              ;;
+          esac
+        done
+
+        # Crash thresholds copied from check-run: a few null frames are noise, more than
+        # five is a stack walk into nothing.
+        for f in "${root}"/log/co-host*.log "${home}"/log/co-host*.log; do
+          [ -f "$f" ] || continue
+          echo "Asserting that there is no crash in $f"
+          if [ "$(grep -c 'p 00000000' "$f" 2>/dev/null || echo 0)" -gt 5 ] \
+            || [ "$(grep -E -c 'FATAL: Uncaught signal|Address not mapped at|RAX 0x.*RBX 0x' "$f" 2>/dev/null || echo 0)" -gt 1 ]; then
+            echo "::error::crash signature in $f"
+            grep -E 'FATAL: Uncaught signal|Address not mapped at' "$f" | head -5 || true
+            fail=1
+          fi
+        done
+
+        cores=("${root}"/coredump.* "${home}"/coredump.*)
+        if [ ${#cores[@]} -gt 0 ]; then
+          echo "::error::coredump present: ${cores[*]}"
+          fail=1
+        fi
+
+        for f in "${root}"/runc.log "${root}"/runc.global.log \
+                 "${home}"/runc.log "${home}"/runc.global.log; do
+          [ -f "$f" ] || continue
+          if grep -q '^E:' "$f"; then
+            echo "::error::error in $f"
+            grep '^E:' "$f" | head -5
+            fail=1
+          fi
+        done
+
+        if [ "$fail" -ne 0 ]; then
+          echo "::error::instrumentation check FAILED"
+          exit 1
+        fi
+        echo "instrumentation check passed"
