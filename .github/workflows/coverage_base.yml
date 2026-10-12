@@ -11,8 +11,6 @@ on:
   # Allow for manual runs
   workflow_dispatch:
   # Runs at 00:00, on day 1 of the month (every ~30 days)
-  schedule:
-    - cron: '0 0 1 * *'
   push:
     branches:
       - main
